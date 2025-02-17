@@ -45,34 +45,38 @@ def save_task(task):
 async def run_task(task):
     await asyncio.sleep(1)
     task["status"] = "queued"
-    async with process_limit:
-        tmp_path = tmp_folder / (str(dt.datetime.now()) + ".yaml")
-        with tmp_path.open("w") as f:
-            yaml.safe_dump(task["args"], f)
-        p = await asyncio.subprocess.create_subprocess_exec("conda","run", "-n", task["conda_env"], "python", task["script"], "--config_file", str(tmp_path), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await asyncio.sleep(1)
-        task["messages"] = []
-        task["status"] = "running"
-        finished = False
-        while not finished:
-            out = tg.create_task(p.stdout.readline())
-            err = tg.create_task(p.stderr.readline())
-            end = tg.create_task(p.wait())
-            done, pending = await asyncio.wait([out, err, end], return_when=asyncio.FIRST_COMPLETED)
-            t = dt.datetime.now(tz=dt.timezone.utc).astimezone()
-            for d in done:
-                if d is end:
-                    finished=True
-                    task["return_code"] = end.result()
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                else:
-                    r = d.result().decode()
-                    source = "stderr" if d is err else "stdout" if d is out else None
-                    task["messages"].append(dict(source=source, date=t, message=r))
-    task["status"] = "success" if task["return_code"] == 0 else "error"
-    del task["__task__"]
-    save_task(task)
+    try:
+        async with process_limit:
+            tmp_path = tmp_folder / (str(dt.datetime.now()) + ".yaml")
+            with tmp_path.open("w") as f:
+                yaml.safe_dump(task["args"], f)
+            p = await asyncio.subprocess.create_subprocess_exec("conda","run", "-n", task["conda_env"], "python", task["script"], "--config_file", str(tmp_path), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            await asyncio.sleep(1)
+            task["messages"] = []
+            task["status"] = "running"
+            finished = False
+            while not finished:
+                out = tg.create_task(p.stdout.readline())
+                err = tg.create_task(p.stderr.readline())
+                end = tg.create_task(p.wait())
+                done, pending = await asyncio.wait([out, err, end], return_when=asyncio.FIRST_COMPLETED)
+                t = dt.datetime.now(tz=dt.timezone.utc).astimezone()
+                for d in done:
+                    if d is end:
+                        finished=True
+                        task["return_code"] = end.result()
+                        if tmp_path.exists():
+                            tmp_path.unlink()
+                    else:
+                        r = d.result().decode()
+                        source = "stderr" if d is err else "stdout" if d is out else None
+                        task["messages"].append(dict(source=source, date=t, message=r))
+        task["status"] = "success" if task["return_code"] == 0 else "error"
+    except asyncio.CancelledError:
+        task["status"] = "Cancelled"
+    finally:
+        del task["__task__"]
+        save_task(task)
     
 
 async def handle_client(reader: asyncio.StreamReader, writer):
@@ -101,7 +105,11 @@ async def handle_client(reader: asyncio.StreamReader, writer):
             else:
                 t_info = t
             await send(writer, t_info)
-
+        elif data["action"] == "cancel_task":
+            t = tasks[data["id"]]
+            if "__task__" in t:
+                t["status"] = "cancelling"
+                t["__task__"].cancel()
             
             
 async def print_tasks():
