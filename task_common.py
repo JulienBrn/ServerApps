@@ -2,7 +2,7 @@ import asyncio, json, io
 import pandas as pd
 
 async def send(writer: asyncio.StreamWriter, d):
-    s = json.dumps(d)+"\n"
+    s = json.dumps(d) +"\n"
     b = s.encode()
     writer.write((str(len(b)) + "\n").encode())
     writer.write(b)

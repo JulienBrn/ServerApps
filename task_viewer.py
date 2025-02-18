@@ -136,7 +136,7 @@ run_btn = pn.widgets.Button(name="Add Task")
 
 async def add_run(e):
     try:
-        p = await asyncio.subprocess.create_subprocess_exec("python", "/home/julienb/Documents/ServerApps/task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        p = await asyncio.subprocess.create_subprocess_exec("python", "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
         request = dict(action="run_task", run_type="python", conda_env="dbscripts",
                 script=str(scripts_dict.rx.value[script_selector.value].resolve()), 
                 args=args_selector.object.value,
