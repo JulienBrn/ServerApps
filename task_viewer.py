@@ -63,6 +63,7 @@ def get_schema(script, d):
         schema_file.unlink()
     except Exception as e:
         has_schema_error.rx.value= True
+        print(e)
         return dict(properties=dict(args=dict(type="string", default=f"Error while loading schema for arguments {e}")))
     has_schema_error.rx.value = False
     return schema
