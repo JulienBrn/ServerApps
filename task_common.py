@@ -2,7 +2,7 @@ import asyncio, json, io
 import pandas as pd
 
 async def send(writer: asyncio.StreamWriter, d):
-    s = json.dumps(d)
+    s = json.dumps(d)+"\n"
     b = s.encode()
     writer.write((str(len(b)) + "\n").encode())
     writer.write(b)
@@ -18,7 +18,7 @@ async def receive(reader: asyncio.StreamReader):
     return json.loads(s)
 
 async def send_df(writer: asyncio.StreamWriter, df: pd.DataFrame):
-    s = df.to_json(s, orient="table")
+    s = df.to_json(orient="table", default_handler=str) + "\n"
     b = s.encode()
     writer.write((str(len(b)) + "\n").encode())
     writer.write(b)

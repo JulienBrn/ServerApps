@@ -170,7 +170,7 @@ async def print_tasks():
 async def main():
     async with tg:
         s = await asyncio.start_server(handle_client, host="localhost", port=8888)
-        tg.create_task(print_tasks())
+        # tg.create_task(print_tasks())
         tg.create_task(s.serve_forever())
 
 asyncio.run(main())

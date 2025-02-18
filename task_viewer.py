@@ -1,24 +1,52 @@
 import panel as pn
-import subprocess, time
+import subprocess, time, sys
+import datetime as dt
 from datetime import datetime
 from pathlib import Path
 import json
 import jsonschema_default
 import param
 import pandas as pd, numpy as np
+import asyncio, io
+import pydantic
+from task_common import send, receive, receive_df
 
 pn.extension('ace', 'jsoneditor', "terminal", 'floatpanel', "tabulator", css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"])
 Path("/tmp/panel_script_launcher_schema").mkdir(exist_ok=True)
 Path("/tmp/panel_script_launcher_args").mkdir(exist_ok=True)
 script_folder = Path("/media/filer2/T4b/SharedCode/RunnerScripts/")
 
-my_runs = pn.rx(pd.DataFrame(dict(
-    task_name=pd.Series([], dtype=str),
-    script=pd.Series([], dtype=str),                             
-    add_date=pd.Series([], dtype='datetime64[ns]'), 
-    status=pd.Series([], 
-    dtype=pd.CategoricalDtype(["Queued", "Running", "Cancelled", "Error"])))))
+session = "session_"+str(datetime.now())
+filter_expr = None
 
+run_df = pn.rx(pd.DataFrame())
+conn = []
+
+async def update_run_df():
+    try:
+        p = await asyncio.subprocess.create_subprocess_exec("python", "/home/julienb/Documents/ServerApps/task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        prev_str = ""
+        while True:
+            request = dict(action="get_task_df") #filter_expr=f"session='{session}'"
+            r_str = (json.dumps(request)+"\n").encode()
+            p.stdin.write((str(len(r_str))+"\n").encode())
+            p.stdin.write(r_str)
+            await p.stdin.drain()
+            size_b = await p.stdout.readline()
+            size_s = size_b.decode()
+            ret_size = int(size_s)
+            ret = (await p.stdout.read(ret_size)).decode()
+            if ret != prev_str:
+                print("updating")
+                table = pd.read_json(io.StringIO(ret), orient="table")
+                run_df.rx.value = table
+                prev_str = ret
+            await asyncio.sleep(2)
+    except: raise
+    finally:
+        p.terminate()
+
+pn.state.onload(update_run_df)
 
 update_btn = pn.widgets.Button(name="⟳", align=("start", "end"), margin=0)
 scripts_dict = pn.rx(lambda c: {str(p.relative_to(script_folder)):p for p in script_folder.glob("**/*.py")})(update_btn)
@@ -103,19 +131,42 @@ pn.bind(load_params_from_file, load_run_btn, watch=True)
 
 task_name = pn.widgets.TextInput(placeholder="Unique name of task")
 import re
-is_invalid_task_name = pn.rx(lambda s, df: re.fullmatch("\w+", s) is None or s in df["task_name"].to_list())(task_name.param.value_input, my_runs)
-run_btn = pn.widgets.Button(name="Add Task", disabled=has_schema_error.rx.or_(is_invalid_task_name))
+# is_invalid_task_name = pn.rx(lambda s, df: re.fullmatch("\w+", s) is None or s in df["task_name"].to_list())(task_name.param.value_input, my_runs)
+run_btn = pn.widgets.Button(name="Add Task")
 
-def add_run():
-    new_df = pd.concat([my_runs.rx.value, pd.DataFrame([dict(task_name=task_name.value, script=script_selector.value, add_date=datetime.now(), status="Queued")])], ignore_index=True)
-    my_runs.rx.value = new_df
+async def add_run(e):
+    try:
+        p = await asyncio.subprocess.create_subprocess_exec("python", "/home/julienb/Documents/ServerApps/task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        request = dict(action="run_task", run_type="python", conda_env="dbscripts",
+                script=str(scripts_dict.rx.value[script_selector.value].resolve()), 
+                args=args_selector.object.value,
+                creation_date = str(dt.datetime.now(tz=dt.timezone.utc).astimezone())
+        )
+        r_str = (json.dumps(request)+"\n").encode()
+        p.stdin.write((str(len(r_str))+"\n").encode())
+        p.stdin.write(r_str)
+        await p.stdin.drain()
+        size_b = await p.stdout.readline()
+        size_s = size_b.decode()
+        ret_size = int(size_s)
+        id = (await p.stdout.read(ret_size)).decode()
+        p.terminate()
+    except: raise
+    finally:
+        p.terminate()
 
-run_btn.on_click(lambda ev: add_run())
+ #disabled=has_schema_error.rx.or_(is_invalid_task_name)
+
+# def add_run():
+#     new_df = pd.concat([my_runs.rx.value, pd.DataFrame([dict(task_name=task_name.value, script=script_selector.value, add_date=datetime.now(), status="Queued")])], ignore_index=True)
+#     my_runs.rx.value = new_df
+
+run_btn.on_click(add_run)
 
 
 new_run = pn.Card(load_run_btn, pn.Row(script_selector, update_btn), args_selector, pn.Row(task_name, save_run_btn, download_btn, run_btn), title="New Run", width_policy='max')
 
-run_table= pn.widgets.Tabulator(my_runs, width_policy='max', selectable='checkbox', hidden_columns=["index"])
+run_table= pn.widgets.Tabulator(run_df, width_policy='max', selectable='checkbox', hidden_columns=["index"], sorters=[dict(field="id", dir="desc")])
 # header_filters=dict(Queued={'type': 'input', 'func': 'like', 'placeholder': 'filter'})
 
 exec_btn = pn.widgets.Button(name="Execute Tasks")
@@ -123,7 +174,7 @@ cancel_btn = pn.widgets.Button(name="Cancel Tasks")
 remove_btn = pn.widgets.Button(name="Remove Tasks")
 
 no_runs = pn.pane.Alert("No tasks to display")
-tasks = pn.rx(lambda d:  pn.Column(run_table, pn.Row(exec_btn, cancel_btn, remove_btn)) if len(d.index) >0 else no_runs)(my_runs)
+tasks = pn.rx(lambda d:  pn.Column(run_table, pn.Row(exec_btn, cancel_btn, remove_btn)) if len(d.index) >0 else no_runs)(run_df)
 run_manager = pn.Card(tasks, title="Task Manager", width_policy='max')
 
 

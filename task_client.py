@@ -4,6 +4,8 @@ from pathlib import Path
 
 async def main():
     reader, writer = await asyncio.open_connection("localhost", 8888)
+    print(reader)
+    print(writer)
     for i in range(1):
     #     Path("test5.mp4").unlink(missing_ok=True)
         d = dict(action="run_task", run_type="python", conda_env="dbscripts",
