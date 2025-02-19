@@ -22,6 +22,8 @@ filter_expr = None
 run_df = pn.rx(pd.DataFrame())
 conn = []
 
+python_path = sys.executable
+
 async def update_run_df():
     try:
         p = await asyncio.subprocess.create_subprocess_exec("python", "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
@@ -37,7 +39,6 @@ async def update_run_df():
             ret_size = int(size_s)
             ret = (await p.stdout.read(ret_size)).decode()
             if ret != prev_str:
-                print("updating")
                 table = pd.read_json(io.StringIO(ret), orient="table")
                 run_df.rx.value = table
                 prev_str = ret
@@ -58,7 +59,7 @@ args_read_value = None
 def get_schema(script, d):
     try:
         schema_file = Path(f"/tmp/panel_script_launcher_schema/{datetime.now()}.json")
-        subprocess.run(["python", str(d[script]), "--export_schema", "--schema_file", str(schema_file)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run([python_path, str(d[script]), "--export_schema", "--schema_file", str(schema_file)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         with schema_file.open("r") as f:
             schema = json.load(f)
         schema_file.unlink()
@@ -138,7 +139,7 @@ run_btn = pn.widgets.Button(name="Add Task")
 
 async def add_run(e):
     try:
-        p = await asyncio.subprocess.create_subprocess_exec("python", "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        p = await asyncio.subprocess.create_subprocess_exec(python_path, "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
         request = dict(action="run_task", run_type="python", conda_env="dbscripts",
                 script=str(scripts_dict.rx.value[script_selector.value].resolve()), 
                 args=args_selector.object.value,
@@ -171,7 +172,7 @@ new_run = pn.Card(load_run_btn, pn.Row(script_selector, update_btn), args_select
 
 async def get_task_info(task_id):
     try:
-        p = await asyncio.subprocess.create_subprocess_exec("python", "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        p = await asyncio.subprocess.create_subprocess_exec(python_path, "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
         request = dict(action="get_task_info", id=task_id)
         r_str = (json.dumps(request)+"\n").encode()
         p.stdin.write((str(len(r_str))+"\n").encode())
