@@ -44,7 +44,8 @@ async def update_run_df():
             await asyncio.sleep(2)
     except: raise
     finally:
-        p.terminate()
+        stop = await asyncio.subprocess.create_subprocess_shell(f"pkill --signal 15 {p.pid}")
+        await stop.wait()
 
 pn.state.onload(update_run_df)
 
@@ -154,7 +155,8 @@ async def add_run(e):
         p.terminate()
     except: raise
     finally:
-        p.terminate()
+        stop = await asyncio.subprocess.create_subprocess_shell(f"pkill --signal 15 {p.pid}")
+        await stop.wait()
 
  #disabled=has_schema_error.rx.or_(is_invalid_task_name)
 
@@ -167,7 +169,54 @@ run_btn.on_click(add_run)
 
 new_run = pn.Card(load_run_btn, pn.Row(script_selector, update_btn), args_selector, pn.Row(task_name, save_run_btn, download_btn, run_btn), title="New Run", width_policy='max')
 
-run_table= pn.widgets.Tabulator(run_df, width_policy='max', selectable='checkbox', hidden_columns=["index"], sorters=[dict(field="id", dir="desc")])
+async def get_task_info(task_id):
+    try:
+        p = await asyncio.subprocess.create_subprocess_exec("python", "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        request = dict(action="get_task_info", id=task_id)
+        r_str = (json.dumps(request)+"\n").encode()
+        p.stdin.write((str(len(r_str))+"\n").encode())
+        p.stdin.write(r_str)
+        await p.stdin.drain()
+        size_b = await p.stdout.readline()
+        size_s = size_b.decode()
+        ret_size = int(size_s)
+        res = (await p.stdout.read(ret_size)).decode()
+        p.terminate()
+        return json.loads(res)
+    except: raise
+    finally:
+        stop = await asyncio.subprocess.create_subprocess_shell(f"pkill --signal 15 {p.pid}")
+        await stop.wait()
+
+def display_row_content(item: pd.Series):
+    content = pn.pane.Placeholder()
+    selector = pn.widgets.Select(name="View options", options=["Terminal", "Script Params"])
+    cb = []
+    def handle_selector(opt):
+        for c in cb:
+            c.stop()
+        if opt == "Terminal":
+            term_str = ""
+            async def update_t():
+                nonlocal term_str
+                prev_str = term_str
+                task_info = await get_task_info(int(item["id"]))
+                term_str = "".join([str(x["message"]) for x in task_info["messages"]])
+                if prev_str != term_str:
+                    content.update(pn.widgets.Terminal(term_str, width_policy='max'))
+            cb.append(pn.state.add_periodic_callback(update_t, period=2000))
+        elif opt == "Script Params":
+            async def get_params():
+                task_info = await get_task_info(int(item["id"]))
+                params = task_info["args"]
+                content.update(pn.widgets.JSONEditor(value = params, mode="view", width_policy='max'))
+            pn.state.execute(get_params)
+            
+    handle_selector(selector.value)
+    pn.bind(handle_selector, selector, watch=True)
+    return pn.Column(selector, content, width_policy='max')
+
+run_table= pn.widgets.Tabulator(run_df, width_policy='max', selectable='checkbox', hidden_columns=["index"], sorters=[dict(field="id", dir="desc")], row_content=display_row_content)
 # header_filters=dict(Queued={'type': 'input', 'func': 'like', 'placeholder': 'filter'})
 
 exec_btn = pn.widgets.Button(name="Execute Tasks")
@@ -179,11 +228,9 @@ tasks = pn.rx(lambda d:  pn.Column(run_table, pn.Row(exec_btn, cancel_btn, remov
 run_manager = pn.Card(tasks, title="Task Manager", width_policy='max')
 
 
-task_viewer = pn.Card(title="Task Viewer", width_policy='max')
 
 
-
-pn.Column(new_run, pn.Spacer(height=20), run_manager, pn.Spacer(height=20), task_viewer, width_policy='max').servable()
+pn.Column(new_run, pn.Spacer(height=20), run_manager, pn.Spacer(height=20), width_policy='max').servable()
 
 
 

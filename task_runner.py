@@ -68,8 +68,8 @@ async def run_task(task):
             try:
                 while not finished:
                     async with asyncio.TaskGroup() as rg:
-                        out = rg.create_task(p.stdout.readline())
-                        err = rg.create_task(p.stderr.readline())
+                        out = rg.create_task(p.stdout.read(1024))
+                        err = rg.create_task(p.stderr.read(1024))
                         end = rg.create_task(p.wait())
                         done, pending = await asyncio.wait([out, err, end], return_when=asyncio.FIRST_COMPLETED)
                         t = dt.datetime.now(tz=dt.timezone.utc).astimezone()
@@ -77,21 +77,37 @@ async def run_task(task):
                             if d is end:
                                 finished=True
                                 task["return_code"] = end.result()
-                                if tmp_path.exists():
-                                    tmp_path.unlink()
                             else:
                                 r = d.result().decode()
                                 source = "stderr" if d is err else "stdout" if d is out else None
                                 task["messages"].append(dict(source=source, date=t, message=r))
-            except BaseException as e:
-                import os 
-                pgid = os.getpgid(p.pid)
-                stop = await asyncio.subprocess.create_subprocess_shell(f"pkill --signal 15 -g {pgid}")
-                await stop.wait()
-                await p.wait()
-                raise
+                
+            except: raise
             else:
                 task["status"] = "success" if task["return_code"] == 0 else "run error"
+            finally:
+                try:
+                    t = dt.datetime.now(tz=dt.timezone.utc).astimezone()
+                    try:
+                        out = await asyncio.wait_for(p.stdout.read(), 1)
+                        if len(out) > 0:
+                            task["messages"].append(dict(source="stdout", date=t, message=out.decode()))
+                    except: 
+                        print("last stdout messages not retrieved...")
+                    try:
+                        out = await asyncio.wait_for(p.stderr.read(), 1)
+                        if len(out) > 0:
+                            task["messages"].append(dict(source="stderr", date=t, message=out.decode()))
+                    except: 
+                        print("last stderr messages not retrieved...")
+                    
+                    import os 
+                    pgid = os.getpgid(p.pid)
+                    stop = await asyncio.subprocess.create_subprocess_shell(f"pkill --signal 15 -g {pgid}")
+                    await stop.wait()
+                    await p.wait()
+                except ProcessLookupError: pass
+                
     except asyncio.CancelledError:
         task["status"] = "Cancelled"
         other_prints=True
@@ -103,6 +119,8 @@ async def run_task(task):
     finally:
         del task["__task__"]
         del task["__process__"]
+        if tmp_path.exists():
+            tmp_path.unlink()
         save_task(task)
     
 
@@ -111,7 +129,10 @@ async def handle_client(reader: asyncio.StreamReader, writer):
         data = await receive(reader)
         if not data:
             break
-        elif data["action"] == "run_task":
+        if "action" in data:
+            print("Received ", data["action"])
+
+        if data["action"] == "run_task":
             tasks.append(data)
             data["id"] = len(tasks)-1
             data["status"] = "unprocessed"
@@ -130,8 +151,10 @@ async def handle_client(reader: asyncio.StreamReader, writer):
                 with Path(t["store_path"]).open("r") as f:
                     t_info = yaml.safe_load(f)
             else:
-                t_info = t
+                print("Sending_info")
+                t_info = {k:v for k, v in t.items() if k in ["args", "messages"]}
             await send(writer, t_info)
+            print("info sent")
         elif data["action"] == "cancel_task":
             t = tasks[data["id"]]
             if "__task__" in t:
