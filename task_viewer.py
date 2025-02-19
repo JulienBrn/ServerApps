@@ -26,7 +26,7 @@ python_path = sys.executable
 
 async def update_run_df():
     try:
-        p = await asyncio.subprocess.create_subprocess_exec("python", "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        p = await asyncio.subprocess.create_subprocess_exec(python_path, "task_query.py", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
         prev_str = ""
         while True:
             request = dict(action="get_task_df") #filter_expr=f"session='{session}'"
